@@ -1,0 +1,9 @@
+dist
+node_modules
+xmpt.yaml
+.DS_Store
+.vscode
+.idea
+*.log
+.env
+.env.local
