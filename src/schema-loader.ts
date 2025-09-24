@@ -17,9 +17,9 @@ export class OpenAPISchemaLoader {
 
     const content = fs.readFileSync(schemaPath, 'utf-8');
     const ext = path.extname(schemaPath).toLowerCase();
-    
+
     let schema: any;
-    
+
     try {
       if (ext === '.yaml' || ext === '.yml') {
         schema = yaml.parse(content);
@@ -34,7 +34,7 @@ export class OpenAPISchemaLoader {
 
     // Comprehensive validation
     const validation = this.validateSchema(schema);
-    
+
     if (!validation.valid) {
       throw new Error(`Invalid OpenAPI schema:\n${validation.errors.join('\n')}`);
     }
@@ -112,7 +112,7 @@ export class OpenAPISchemaLoader {
       if (schema.components.schemas) {
         const schemaNames = Object.keys(schema.components.schemas);
         if (schemaNames.length > 0) {
-          console.log(`Found ${schemaNames.length} schema definitions: ${schemaNames.slice(0, 5).join(', ')}${schemaNames.length > 5 ? '...' : ''}`);
+          console.error(`Found ${schemaNames.length} schema definitions: ${schemaNames.slice(0, 5).join(', ')}${schemaNames.length > 5 ? '...' : ''}`);
         }
       }
     }
@@ -140,7 +140,7 @@ export class OpenAPISchemaLoader {
       if (!pathItem) continue;
 
       const methods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'] as const;
-      
+
       for (const method of methods) {
         // Handle null/undefined operations (from incomplete YAML/JSON)
         if (method in pathItem && (pathItem[method] === null || pathItem[method] === undefined)) {
@@ -181,10 +181,10 @@ export class OpenAPISchemaLoader {
       await this.loadSchema(schemaPath);
       return { valid: true, errors: [], warnings: [] };
     } catch (error) {
-      return { 
-        valid: false, 
-        errors: [error instanceof Error ? error.message : String(error)], 
-        warnings: [] 
+      return {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+        warnings: []
       };
     }
   }
