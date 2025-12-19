@@ -1,6 +1,9 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { OpenAPIV3 } from 'openapi-types';
 import { ServerOptions } from './server';
+import FormData from 'form-data';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface OperationInfo {
   method: string;
@@ -131,10 +134,22 @@ export class APIClient {
     // Process request body with content type detection
     if (requestBody && args.body !== undefined) {
       const contentType = this.determineContentType(requestBody, headers);
-      body = this.processRequestBody(args.body, contentType);
       
-      if (contentType && !headers['Content-Type']) {
-        headers['Content-Type'] = contentType;
+      // Handle multipart/form-data separately for file uploads
+      if (contentType === 'multipart/form-data') {
+        const formData = await this.processMultipartFormData(args.body, requestBody);
+        body = formData;
+        // Let form-data set its own Content-Type with boundary
+        // Remove any existing Content-Type header
+        delete headers['Content-Type'];
+        delete headers['content-type'];
+        // FormData will set the correct headers automatically
+      } else {
+        body = this.processRequestBody(args.body, contentType);
+        
+        if (contentType && !headers['Content-Type']) {
+          headers['Content-Type'] = contentType;
+        }
       }
     }
 
@@ -145,6 +160,14 @@ export class APIClient {
       headers: { ...(this.client.defaults.headers.common || {}), ...headers },
       data: body,
     };
+
+    // If body is FormData, merge its headers
+    if (body instanceof FormData) {
+      config.headers = {
+        ...config.headers,
+        ...body.getHeaders()
+      };
+    }
 
     try {
       const response = await this.client.request(config);
@@ -253,6 +276,181 @@ export class APIClient {
       default:
         return body;
     }
+  }
+
+  /**
+   * Check if a schema field represents a file upload
+   */
+  private isFileField(schema: any): boolean {
+    if (!schema) return false;
+    
+    // Check for binary format
+    if (schema.format === 'binary') return true;
+    
+    // Check for array of binary (format can be at array level or items level)
+    if (schema.type === 'array') {
+      // Some schemas put format at array level (non-standard but happens)
+      if (schema.format === 'binary') return true;
+      // Standard: check items
+      if (schema.items?.format === 'binary') return true;
+    }
+    
+    // Check in description for file path hints (from transformed schemas)
+    const description = schema.description?.toLowerCase() || '';
+    return description.includes('file path') || description.includes('filepath');
+  }
+
+  /**
+   * Get schema for a request body field
+   */
+  private getRequestBodySchema(requestBody: OpenAPIV3.RequestBodyObject, contentType: string): any {
+    const content = requestBody.content?.[contentType];
+    if (!content?.schema) return null;
+    
+    return this.resolveSchemaReference(content.schema);
+  }
+
+  /**
+   * Resolve a schema reference to its actual definition
+   */
+  private resolveSchemaReference(schema: any): any {
+    if (!schema) return null;
+    
+    if ('$ref' in schema) {
+      const ref = schema.$ref;
+      
+      // Handle JSON Schema references like #/components/schemas/SchemaName
+      if (ref.startsWith('#/')) {
+        const parts = ref.substring(2).split('/'); // Remove '#/' and split
+        let current: any = this.schema;
+        
+        for (const part of parts) {
+          if (current && typeof current === 'object' && part in current) {
+            current = current[part];
+          } else {
+            console.error(`[File Upload Debug] Failed to resolve $ref: ${ref} at part: ${part}`);
+            return schema;
+          }
+        }
+        
+        console.error('[File Upload Debug] Resolved $ref:', ref, 'to:', Object.keys(current.properties || {}));
+        return current;
+      }
+      
+      // Return the schema as-is if we can't resolve it
+      return schema;
+    }
+    
+    return schema;
+  }
+
+  /**
+   * Process multipart/form-data with file uploads
+   */
+  private async processMultipartFormData(body: any, requestBody?: OpenAPIV3.RequestBodyObject): Promise<FormData> {
+    const formData = new FormData();
+    
+    if (!body || typeof body !== 'object') {
+      throw new Error('Request body must be an object for multipart/form-data');
+    }
+
+    // Get schema for the request body
+    const schema = requestBody ? this.getRequestBodySchema(requestBody, 'multipart/form-data') : null;
+    const properties = schema?.properties || {};
+    
+    console.error('[File Upload Debug] Processing multipart form data');
+    console.error('[File Upload Debug] Body keys:', Object.keys(body));
+    console.error('[File Upload Debug] Schema properties:', Object.keys(properties));
+
+    for (const [key, value] of Object.entries(body)) {
+      const fieldSchema = properties[key];
+      const isFile = this.isFileField(fieldSchema);
+      
+      console.error(`[File Upload Debug] Field "${key}": isFile=${isFile}, value type=${typeof value}, isArray=${Array.isArray(value)}`);
+      if (fieldSchema) {
+        console.error(`[File Upload Debug] Field "${key}" schema:`, JSON.stringify(fieldSchema, null, 2));
+      }
+
+      if (isFile && value) {
+        // Handle file upload(s)
+        if (Array.isArray(value)) {
+          // Multiple files
+          for (const filePath of value) {
+            if (typeof filePath === 'string') {
+              await this.appendFileToFormData(formData, key, filePath);
+            } else {
+              throw new Error(`File path must be a string, got: ${typeof filePath}`);
+            }
+          }
+        } else if (typeof value === 'string') {
+          // Single file
+          await this.appendFileToFormData(formData, key, value);
+        } else {
+          throw new Error(`File path must be a string, got: ${typeof value}`);
+        }
+      } else {
+        // Regular field
+        if (typeof value === 'object') {
+          formData.append(key, JSON.stringify(value));
+        } else {
+          formData.append(key, String(value));
+        }
+      }
+    }
+
+    return formData;
+  }
+
+  /**
+   * Append a file to FormData from a file path
+   */
+  private async appendFileToFormData(formData: FormData, fieldName: string, filePath: string): Promise<void> {
+    console.error(`[File Upload Debug] Appending file: field="${fieldName}", path="${filePath}"`);
+    
+    // Validate file exists
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    // Read file stats to validate it's a file
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${filePath}`);
+    }
+
+    // Create read stream
+    const fileStream = fs.createReadStream(filePath);
+    const fileName = path.basename(filePath);
+
+    // Append to form data
+    formData.append(fieldName, fileStream, {
+      filename: fileName,
+      contentType: this.getMimeType(filePath)
+    });
+  }
+
+  /**
+   * Get MIME type based on file extension
+   */
+  private getMimeType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    
+    const mimeTypes: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.pdf': 'application/pdf',
+      '.json': 'application/json',
+      '.xml': 'text/xml',
+      '.txt': 'text/plain'
+    };
+
+    return mimeTypes[ext] || 'application/octet-stream';
   }
 
   getOperations(): Map<string, OperationInfo> {

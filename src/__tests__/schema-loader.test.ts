@@ -287,11 +287,13 @@ components:
 `;
       const filePath = createTempFile('schema.yaml', schemaContent);
       
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      
       await schemaLoader.loadSchema(filePath);
       
-      expect(consoleLogSpy).toHaveBeenCalledWith('Found 2 schema definitions: User, Organization');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Found 2 schema definitions: User, Organization');
       
-      consoleLogSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
     });
   });
 

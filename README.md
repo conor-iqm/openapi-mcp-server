@@ -8,6 +8,7 @@ This application exposes any REST API as an MCP (Model Context Protocol) server 
 - **Advanced Schema Processing**: Full $ref resolution, composition schemas (oneOf, anyOf, allOf)
 - **Rich Tool Generation**: Automatic MCP tools with detailed descriptions, validation, and metadata
 - **Multiple Content Types**: Support for JSON, XML, form data, and multipart uploads
+- **File Upload Support**: 🆕 Automatic handling of binary file uploads - pass file paths, server handles the rest
 - **Parameter Handling**: Path, query, header parameters with type conversion and validation
 - **Authentication**: HTTP Basic Authentication and custom headers support
 - **Enhanced Error Handling**: Detailed error messages with request context
@@ -78,6 +79,64 @@ npm start -- --schema ./api-schema.yaml --headers '{"Authorization": "Bearer tok
 ```
 
 **Note**: Basic authentication (--username/--password) and additional headers can be used together. If both contain Authorization headers, the additional headers will take precedence.
+
+## File Upload Support
+
+The MCP server automatically handles file uploads for endpoints that accept binary data through `multipart/form-data`. When an OpenAPI schema defines file upload fields (using `format: binary`), the generated MCP tools accept **file paths** instead of file contents.
+
+### How It Works
+
+1. **Automatic Detection**: The server detects file upload fields in your OpenAPI schema
+2. **Path-Based Input**: Generated tools accept absolute file paths as strings
+3. **Automatic Processing**: The server reads files, creates proper multipart requests, and uploads them
+
+### Quick Example
+
+For an API endpoint that accepts file uploads:
+
+```yaml
+# OpenAPI Schema
+requestBody:
+  content:
+    multipart/form-data:
+      schema:
+        properties:
+          file:
+            type: string
+            format: binary
+```
+
+**Claude can use it like this:**
+```javascript
+{
+  "name": "uploadFile",
+  "arguments": {
+    "body": {
+      "file": "/Users/username/Documents/image.jpg"
+    }
+  }
+}
+```
+
+The server automatically:
+- Reads the file from the provided path
+- Determines the MIME type
+- Creates a proper multipart/form-data request
+- Uploads it to your API
+
+### Detailed Documentation
+
+- **[Complete File Upload Guide](FILE_UPLOAD_GUIDE.md)** - Implementation details, error handling, MIME types
+- **[Usage Examples](EXAMPLE_FILE_UPLOAD.md)** - Real-world examples with the Creative API
+
+### Supported Scenarios
+
+- ✅ Single file uploads
+- ✅ Multiple file uploads (arrays)
+- ✅ Mixed content (files + JSON metadata)
+- ✅ Automatic MIME type detection
+- ✅ File validation (existence, type)
+- ✅ Support for images, videos, audio, PDFs, and more
 
 ## Adding to Claude Desktop
 
@@ -223,6 +282,7 @@ Once configured and restarted, you should be able to use the API tools in your c
 
 - ✅ **Complete Parameter Support**: Path, query, header parameters with validation
 - ✅ **All Content Types**: JSON, XML, form-urlencoded, multipart/form-data, and more
+- ✅ **File Uploads**: Automatic handling of binary file uploads via file paths
 - ✅ **Advanced Schema Features**: $ref resolution, oneOf/anyOf/allOf composition, nested objects
 - ✅ **Type Validation**: Full JSON Schema validation with format support (email, uuid, etc.)
 - ✅ **Authentication**: HTTP Basic Auth and custom header support

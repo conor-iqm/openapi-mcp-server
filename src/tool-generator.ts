@@ -344,7 +344,13 @@ export class ToolGenerator {
     if (schema.properties) {
       resolved.properties = {};
       for (const [key, prop] of Object.entries(schema.properties)) {
-        resolved.properties[key] = this.resolveSchema(prop);
+        const resolvedProp = this.resolveSchema(prop);
+        // Transform file upload fields to accept file paths
+        if (this.isFileUploadSchema(prop)) {
+          resolved.properties[key] = this.transformFileUploadSchema(resolvedProp, key);
+        } else {
+          resolved.properties[key] = resolvedProp;
+        }
       }
     }
 
@@ -404,5 +410,60 @@ export class ToolGenerator {
   private enhanceCompositionDescription(description: string | undefined, type: string): string {
     const compositionDesc = `Schema supports ${type} the following options`;
     return description ? `${description}\n\n${compositionDesc}` : compositionDesc;
+  }
+
+  /**
+   * Check if a schema represents a file upload field
+   */
+  private isFileUploadSchema(schema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject): boolean {
+    if ('$ref' in schema) {
+      const resolved = this.resolveReference(schema.$ref);
+      if (resolved) return this.isFileUploadSchema(resolved);
+      return false;
+    }
+    
+    // Check for binary format (typical for file uploads)
+    if (schema.format === 'binary') return true;
+    
+    // Check for array of binary items
+    if (schema.type === 'array') {
+      // Some schemas put format: binary at the array level (non-standard but happens)
+      if (schema.format === 'binary') return true;
+      
+      // Standard: check items for binary format
+      if ('items' in schema && schema.items) {
+        const items = schema.items;
+        if ('format' in items && items.format === 'binary') return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Transform file upload schema to accept file paths
+   */
+  private transformFileUploadSchema(schema: ResolvedSchema, fieldName: string): ResolvedSchema {
+    // If it's an array of files
+    if (schema.type === 'array' && schema.items?.format === 'binary') {
+      return {
+        type: 'array',
+        items: {
+          type: 'string',
+          description: 'Absolute file path to upload'
+        },
+        description: `Array of file paths to upload. ${schema.description || ''}`
+      };
+    }
+    
+    // Single file
+    if (schema.format === 'binary') {
+      return {
+        type: 'string',
+        description: `Absolute file path to upload. ${schema.description || ''}`
+      };
+    }
+    
+    return schema;
   }
 }
